@@ -215,6 +215,20 @@ namespace MonoDevelop.Projects.MSBuild
 			return msg.CreateResponse ();
 		}
 
+		[MessageHandler]
+		public BinaryMessage BeginBuild (BeginBuildRequest msg)
+		{
+			BeginBuildOperation ();
+			return msg.CreateResponse ();
+		}
+
+		[MessageHandler]
+		public BinaryMessage EndBuild (EndBuildRequest msg)
+		{
+			EndBuildOperation ();
+			return msg.CreateResponse ();
+		}
+
 		ProjectBuilder GetProject (int projectId)
 		{
 			lock (projects) {

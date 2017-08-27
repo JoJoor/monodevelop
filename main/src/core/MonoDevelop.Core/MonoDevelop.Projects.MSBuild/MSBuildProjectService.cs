@@ -1104,7 +1104,23 @@ namespace MonoDevelop.Projects.MSBuild
 			}
 		}
 
-		internal static async Task<RemoteProjectBuilder> GetProjectBuilder (TargetRuntime runtime, string minToolsVersion, string file, string solutionFile, int customId, bool requiresMicrosoftBuild, bool lockBuilder = false)
+		/// <summary>
+		/// Ends the build session in all builders that are building projects that belong to the provided session id
+		/// </summary>
+		/// <returns>The build sessions.</returns>
+		/// <param name="sessionId">Session identifier.</param>
+		internal static async Task EndBuildSessions (int sessionId)
+		{
+			using (await buildersLock.EnterAsync ()) {
+				foreach (var b in builders.GetAllBuilders ())
+					if (b.BuildSessionId == sessionId) {
+						b.BuildSessionId = -1;
+						await b.EndBuildOperation ();
+					}
+			}
+		}
+
+		internal static async Task<RemoteProjectBuilder> GetProjectBuilder (TargetRuntime runtime, string minToolsVersion, string file, string solutionFile, int customId, bool requiresMicrosoftBuild, int buildSessionId, bool lockBuilder = false)
 		{
 			Version mtv = Version.Parse (minToolsVersion);
 			if (mtv >= new Version (15,0))
@@ -1128,9 +1144,12 @@ namespace MonoDevelop.Projects.MSBuild
 
 				RemoteBuildEngine builder = null;
 
+				// Find builders which don't have any session assigned (and in which case the requested session will be assigned),
+				// or which already belong to the requested session.
+
 				if (lockBuilder) {
 					foreach (var b in builders.GetBuilders (builderKey)) {
-						if (b.IsShuttingDown)
+						if (b.IsShuttingDown || (b.BuildSessionId != -1 && b.BuildSessionId != buildSessionId))
 							continue;
 						if (b.Lock ()) {
 							builder = b;
@@ -1139,9 +1158,14 @@ namespace MonoDevelop.Projects.MSBuild
 						b.Unlock ();
 					}
 				} else
-					builder = builders.GetBuilders (builderKey).FirstOrDefault (b => !b.IsShuttingDown);
+					builder = builders.GetBuilders (builderKey).FirstOrDefault (b => !b.IsShuttingDown && (b.BuildSessionId == -1 || b.BuildSessionId == buildSessionId));
 				
 				if (builder != null) {
+					if (builder.BuildSessionId == -1) {
+						// If a new session is being assigned, signal the session start
+						builder.BuildSessionId = buildSessionId;
+						await builder.BeginBuildOperation ();
+					}
 					builder.ReferenceCount++;
 					return await builder.CreateRemoteProjectBuilder (file).ConfigureAwait (false);
 				}
@@ -1184,12 +1208,14 @@ namespace MonoDevelop.Projects.MSBuild
 
 					builders.Add (builderKey, builder);
 					builder.ReferenceCount = 1;
+					builder.BuildSessionId = buildSessionId;
 					builder.Disconnected += async delegate {
 						using (await buildersLock.EnterAsync ().ConfigureAwait (false))
 							builders.Remove (builder);
 					};
 					if (lockBuilder)
 						builder.Lock ();
+					await builder.BeginBuildOperation ();
 					return await builder.CreateRemoteProjectBuilder (file).ConfigureAwait (false);
 				});
 			}

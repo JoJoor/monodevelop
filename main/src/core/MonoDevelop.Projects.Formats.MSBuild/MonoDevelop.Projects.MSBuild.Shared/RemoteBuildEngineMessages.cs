@@ -223,5 +223,15 @@ namespace MonoDevelop.Projects.MSBuild
 		[MessageDataProperty]
 		public MSBuildEvent EventsFilter { get; set; }
 	}
+
+	[MessageDataType]
+	class BeginBuildRequest : BinaryMessage
+	{
+	}
+
+	[MessageDataType]
+	class EndBuildRequest : BinaryMessage
+	{
+	}
 }
 

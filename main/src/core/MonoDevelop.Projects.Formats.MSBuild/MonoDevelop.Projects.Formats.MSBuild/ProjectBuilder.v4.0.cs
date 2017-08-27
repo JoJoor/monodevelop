@@ -65,7 +65,10 @@ namespace MonoDevelop.Projects.MSBuild
 				Project project = null;
 				Dictionary<string, string> originalGlobalProperties = null;
 				try {
+					Console.WriteLine("SETTING UP PROJECT " + Path.GetFileName(file));
+					var s = System.Diagnostics.Stopwatch.StartNew();
 					project = SetupProject (configurations);
+					Console.WriteLine("DONE " + s.ElapsedMilliseconds);
 					InitLogger (logWriter);
 
 					ILogger[] loggers;
@@ -91,8 +94,12 @@ namespace MonoDevelop.Projects.MSBuild
 
 					//building the project will create items and alter properties, so we use a new instance
 					var pi = project.CreateProjectInstance ();
-					
-					pi.Build (runTargets, loggers);
+
+					Console.WriteLine("BUILDING " + Path.GetFileName(file));
+					s = System.Diagnostics.Stopwatch.StartNew();
+//					pi.Build (runTargets, loggers);
+					Build(pi,runTargets, loggers);
+					Console.WriteLine("DONE " + s.ElapsedMilliseconds);
 
 					result = new MSBuildResult (logger.BuildResult.ToArray ());
 
@@ -160,7 +167,7 @@ namespace MonoDevelop.Projects.MSBuild
 		{			
 			var p = engine.GetLoadedProjects (file).FirstOrDefault ();
 			if (p == null) {
-
+				Console.WriteLine("LOADING " + Path.GetFileName(file));
 				var projectDir = Path.GetDirectoryName (file);
 
 				// HACK: workaround to MSBuild bug #53019. We need to ensure that $(BaseIntermediateOutputPath) exists before
@@ -184,16 +191,67 @@ namespace MonoDevelop.Projects.MSBuild
 				}
 			}
 
-			p.SetGlobalProperty ("CurrentSolutionConfigurationContents", slnConfigContents);
-			p.SetGlobalProperty ("Configuration", configuration);
-			if (!string.IsNullOrEmpty (platform))
-				p.SetGlobalProperty ("Platform", platform);
-			else
-				p.RemoveGlobalProperty ("Platform");
+			if (p.GetPropertyValue("Configuration") != configuration || (p.GetPropertyValue("Platform") ?? "") != (platform ?? ""))
+			{
+				Console.WriteLine("NOT REUSING CONF FOR " + Path.GetFileName(file));
+				Console.WriteLine("Current");
+				Console.WriteLine("   CurrentSolutionConfigurationContents: " + p.GetPropertyValue("CurrentSolutionConfigurationContents"));
+				Console.WriteLine("   Configuration: " + p.GetPropertyValue("Configuration"));
+				Console.WriteLine("   Platform: " + p.GetPropertyValue("Platform"));
+				Console.WriteLine("New");
+				Console.WriteLine("   CurrentSolutionConfigurationContents: " + slnConfigContents);
+				Console.WriteLine("   Configuration: " + configuration);
+				Console.WriteLine("   Platform: " + platform);
+				p.SetGlobalProperty("CurrentSolutionConfigurationContents", slnConfigContents);
+				p.SetGlobalProperty("Configuration", configuration);
+				if (!string.IsNullOrEmpty(platform))
+					p.SetGlobalProperty("Platform", platform);
+				else
+					p.RemoveGlobalProperty("Platform");
 
-			p.ReevaluateIfNecessary ();
+				p.ReevaluateIfNecessary();
+			} else {
+				Console.WriteLine("REUSING CONF FOR " + Path.GetFileName(file));
+			}
 
 			return p;
+		}
+
+
+        /// <summary>
+		/// Builds a list of targets with the specified loggers.
+		/// </summary>
+		internal bool Build(ProjectInstance pi, string[] targets, IEnumerable<ILogger> loggers)
+		{
+			if (null == targets)
+			{
+				targets = Array.Empty<string>();
+			}
+
+			BuildResult results;
+
+			BuildManager buildManager = BuildManager.DefaultBuildManager;
+
+			BuildParameters parameters = new BuildParameters(engine);
+			parameters.ResetCaches = false;
+			parameters.EnableNodeReuse = true;
+			BuildRequestData data = new BuildRequestData(pi, targets, parameters.HostServices);
+
+			if (loggers != null)
+			{
+				parameters.Loggers = (loggers is ICollection<ILogger>) ? ((ICollection<ILogger>)loggers) : new List<ILogger>(loggers);
+
+				// Enables task parameter logging based on whether any of the loggers attached
+				// to the Project have their verbosity set to Diagnostic. If no logger has
+				// been set to log diagnostic then the existing/default value will be persisted.
+				parameters.LogTaskInputs = parameters.LogTaskInputs || loggers.Any(logger => logger.Verbosity == LoggerVerbosity.Diagnostic);
+			}
+
+			parameters.MaxNodeCount = 1;
+
+			results = buildManager.Build(parameters, data);
+
+			return results.OverallResult == BuildResultCode.Success;
 		}
 	}
 }

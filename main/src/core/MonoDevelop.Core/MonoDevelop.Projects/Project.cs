@@ -1218,7 +1218,7 @@ namespace MonoDevelop.Projects
 
 					bool newBuilderRequested = false;
 
-					RemoteProjectBuilder builder = await GetProjectBuilder ().ConfigureAwait (false);
+					RemoteProjectBuilder builder = await GetProjectBuilder (context).ConfigureAwait (false);
 
 					// If the builder requires an exclusive lock and it is busy, create a new locked builder.
 					// Fast operations that don't require an exclusive lock can use any builder, either locked or not
@@ -1417,7 +1417,7 @@ namespace MonoDevelop.Projects
 		string lastSlnFileName;
 		AsyncCriticalSection builderLock = new AsyncCriticalSection ();
 
-		internal async Task<RemoteProjectBuilder> GetProjectBuilder ()
+		internal async Task<RemoteProjectBuilder> GetProjectBuilder (OperationContext context = null)
 		{
 			//FIXME: we can't really have per-project runtimes, has to be per-solution
 			TargetRuntime runtime = null;
@@ -1436,7 +1436,16 @@ namespace MonoDevelop.Projects
 						projectBuilder.Shutdown ();
 						projectBuilder.ReleaseReference ();
 					}
-					var pb = await MSBuildProjectService.GetProjectBuilder (runtime, ToolsVersion, FileName, slnFile, 0, RequiresMicrosoftBuild);
+
+					// Extract the session ID from the current build context, if there is one
+					object ob;
+					int buildSessionId;
+					if (context != null && context.SessionData.TryGetValue (MSBuildSolutionExtension.MSBuildProjectOperationId, out ob))
+						buildSessionId = (int)ob;
+					else
+						buildSessionId = -1;
+
+					var pb = await MSBuildProjectService.GetProjectBuilder (runtime, ToolsVersion, FileName, slnFile, 0, RequiresMicrosoftBuild, buildSessionId);
 					pb.AddReference ();
 					pb.Disconnected += delegate {
 						CleanupProjectBuilder ();

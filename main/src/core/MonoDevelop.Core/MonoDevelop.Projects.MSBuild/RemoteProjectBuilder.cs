@@ -62,6 +62,8 @@ namespace MonoDevelop.Projects.MSBuild
 
 		public event EventHandler Disconnected;
 
+		public int BuildSessionId { get; set; } = -1;
+
 		public int AciveEngines {
 			get {
 				return count;
@@ -137,6 +139,26 @@ namespace MonoDevelop.Projects.MSBuild
 		{
 			try {
 				await connection.SendMessage (new SetGlobalPropertiesRequest { Properties = properties });
+			} catch {
+				await CheckDisconnected ();
+				throw;
+			}
+		}
+
+		public async Task BeginBuildOperation ()
+		{
+			try {
+				await connection.SendMessage (new BeginBuildRequest ());
+			} catch {
+				await CheckDisconnected ();
+				throw;
+			}
+		}
+
+		public async Task EndBuildOperation ()
+		{
+			try {
+				await connection.SendMessage (new EndBuildRequest ());
 			} catch {
 				await CheckDisconnected ();
 				throw;

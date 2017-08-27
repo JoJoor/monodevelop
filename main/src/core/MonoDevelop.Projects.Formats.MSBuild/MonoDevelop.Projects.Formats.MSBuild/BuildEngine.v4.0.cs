@@ -33,6 +33,7 @@ using Microsoft.Build.Evaluation;
 using Microsoft.Build.Construction;
 using System.Linq;
 using System.Globalization;
+using Microsoft.Build.Execution;
 
 namespace MonoDevelop.Projects.MSBuild
 {
@@ -90,6 +91,17 @@ namespace MonoDevelop.Projects.MSBuild
 				// changed and which are cached.
 				engine.UnloadAllProjects();
 			});
+		}
+
+		void BeginBuildOperation ()
+		{
+			BuildParameters parameters = new BuildParameters (engine);
+			BuildManager.DefaultBuildManager.BeginBuild (parameters);
+		}
+
+		void EndBuildOperation ()
+		{
+			BuildManager.DefaultBuildManager.EndBuild ();
 		}
 	}
 }

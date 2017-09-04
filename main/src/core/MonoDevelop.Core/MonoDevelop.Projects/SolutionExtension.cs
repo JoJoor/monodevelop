@@ -190,14 +190,14 @@ namespace MonoDevelop.Projects
 			return OnGetSupportsFormat (format);
 		}
 
-		internal protected virtual Task OnBeginBuildOperation (ConfigurationSelector configuration, OperationContext operationContext)
+		internal protected virtual Task OnBeginBuildOperation (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext)
 		{
-			return next.OnBeginBuildOperation (configuration, operationContext);
+			return next.OnBeginBuildOperation (monitor, configuration, operationContext);
 		}
 
-		internal protected virtual Task OnEndBuildOperation (ConfigurationSelector configuration, OperationContext operationContext, BuildResult result)
+		internal protected virtual Task OnEndBuildOperation (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext, BuildResult result)
 		{
-			return next.OnEndBuildOperation (configuration, operationContext, result);
+			return next.OnEndBuildOperation (monitor, configuration, operationContext, result);
 		}
 	}
 }

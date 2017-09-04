@@ -227,6 +227,11 @@ namespace MonoDevelop.Projects.MSBuild
 	[MessageDataType]
 	class BeginBuildRequest : BinaryMessage
 	{
+		[MessageDataProperty]
+		public int LogWriterId { get; set; }
+
+		[MessageDataProperty]
+		public MSBuildVerbosity Verbosity { get; set; }
 	}
 
 	[MessageDataType]

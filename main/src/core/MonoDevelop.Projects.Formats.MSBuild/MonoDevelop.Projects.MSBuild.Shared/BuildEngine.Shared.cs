@@ -218,7 +218,8 @@ namespace MonoDevelop.Projects.MSBuild
 		[MessageHandler]
 		public BinaryMessage BeginBuild (BeginBuildRequest msg)
 		{
-			BeginBuildOperation ();
+			var logger = msg.LogWriterId != -1 ? (IEngineLogWriter)new LogWriter (msg.LogWriterId, MSBuildEvent.None) : (IEngineLogWriter)new NullLogWriter ();
+			BeginBuildOperation (logger, msg.Verbosity);
 			return msg.CreateResponse ();
 		}
 

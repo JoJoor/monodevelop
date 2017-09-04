@@ -895,7 +895,7 @@ namespace MonoDevelop.Projects
 			List<AssemblyReference> result = new List<AssemblyReference> ();
 			if (CheckUseMSBuildEngine (configuration)) {
 				// Get the references list from the msbuild project
-				RemoteProjectBuilder builder = await GetProjectBuilder ();
+				RemoteProjectBuilder builder = await GetProjectBuilder (CancellationToken.None, null, false, false);
 				try {
 					var configs = GetConfigurations (configuration, false);
 					var globalProperties = CreateGlobalProperties ();
@@ -991,7 +991,7 @@ namespace MonoDevelop.Projects
 			var result = new List<PackageDependency> ();
 			if (CheckUseMSBuildEngine (configuration)) {
 				// Get the references list from the msbuild project
-				RemoteProjectBuilder builder = await GetProjectBuilder ();
+				RemoteProjectBuilder builder = await GetProjectBuilder (CancellationToken.None, null);
 				try {
 					var configs = GetConfigurations (configuration, false);
 					var globalProperties = CreateGlobalProperties ();

@@ -83,7 +83,6 @@ namespace MonoDevelop.Projects
 			runConfigurations = new RunConfigurationCollection (this);
 			items = new ProjectItemCollection (this);
 			FileService.FileChanged += HandleFileChanged;
-			Runtime.SystemAssemblyService.DefaultRuntimeChanged += OnDefaultRuntimeChanged;
 			files = new ProjectFileCollection ();
 			Items.Bind (files);
 			DependencyResolutionEnabled = true;
@@ -230,13 +229,6 @@ namespace MonoDevelop.Projects
 
 			MSBuildEngineSupport = MSBuildProjectService.GetMSBuildSupportForProject (this);
 			InitFormatProperties ();
-		}
-
-		void OnDefaultRuntimeChanged (object o, EventArgs args)
-		{
-			// If the default runtime changes, the project builder for this project may change
-			// so it has to be created again.
-			CleanupProjectBuilder ();
 		}
 
 		public IEnumerable<string> FlavorGuids {
@@ -662,15 +654,8 @@ namespace MonoDevelop.Projects
 					else
 						await userProject.SaveAsync (userProject.FileName);
 				}
-				
-				var pb = GetCachedProjectBuilder ();
-				if (pb != null) {
-					try {
-						await pb.Refresh ();
-					} finally {
-						pb.ReleaseReference ();
-					}
-				}
+
+				RefreshProjectBuilder ().Ignore ();
 			}
 		}
 
@@ -1038,8 +1023,7 @@ namespace MonoDevelop.Projects
 			}
 
 			FileService.FileChanged -= HandleFileChanged;
-			Runtime.SystemAssemblyService.DefaultRuntimeChanged -= OnDefaultRuntimeChanged;
-			CleanupProjectBuilder ();
+			RemoteBuildEngineManager.UnloadProject (FileName).Ignore ();
 
 			if (sourceProject != null) {
 				sourceProject.Dispose ();
@@ -1216,20 +1200,7 @@ namespace MonoDevelop.Projects
 					var t1 = Counters.RunMSBuildTargetTimer.BeginTiming (GetProjectEventMetadata (configuration));
 					var t2 = buildTimer != null ? buildTimer.BeginTiming (GetProjectEventMetadata (configuration)) : null;
 
-					bool newBuilderRequested = false;
-
-					RemoteProjectBuilder builder = await GetProjectBuilder (context).ConfigureAwait (false);
-
-					// If the builder requires an exclusive lock and it is busy, create a new locked builder.
-					// Fast operations that don't require an exclusive lock can use any builder, either locked or not
-
-					if (builder.IsBusy && operationRequiresExclusiveLock) {
-						builder.ReleaseReference ();
-						newBuilderRequested = true;
-						builder = await RequestLockedBuilder ().ConfigureAwait (false);
-					}
-					else
-						builder.Lock ();
+					RemoteProjectBuilder builder = await GetProjectBuilder (monitor.CancellationToken, context, setBusy:operationRequiresExclusiveLock).ConfigureAwait (false);
 
 					string [] targets;
 					if (target.IndexOf (';') != -1)
@@ -1240,14 +1211,8 @@ namespace MonoDevelop.Projects
 					try {
 						result = await builder.Run (configs, monitor.Log, new ProxyLogger (this, context.Loggers), context.LogVerbosity, targets, evaluateItems, evaluateProperties, globalProperties, monitor.CancellationToken).ConfigureAwait (false);
 					} finally {
-						builder.Unlock ();
-						builder.ReleaseReference ();
-						if (newBuilderRequested) {
-							// Dispose the builder after a while, so that it can be reused
-							#pragma warning disable 4014
-							Task.Delay (10000).ContinueWith (t => builder.Dispose ());
-							#pragma warning restore 4014
-						}
+						if (operationRequiresExclusiveLock)
+							builder.ResetBusy ();
 						t1.End ();
 						if (t2 != null)
 							t2.End ();
@@ -1296,7 +1261,7 @@ namespace MonoDevelop.Projects
 				return new TargetEvaluationResult (br, evItems, props);
 			}
 			else {
-				CleanupProjectBuilder ();
+				RemoteBuildEngineManager.UnloadProject (FileName).Ignore ();
 				if (this is DotNetProject) {
 					var handler = new MonoDevelop.Projects.MD1.MD1DotNetProjectHandler ((DotNetProject)this);
 					return new TargetEvaluationResult (await handler.RunTarget (monitor, target, configuration));
@@ -1410,16 +1375,10 @@ namespace MonoDevelop.Projects
 
 		#region Project builder management
 
-		RemoteProjectBuilder projectBuilder;
-		string lastBuildToolsVersion;
-		string lastBuildRuntime;
-		string lastFileName;
-		string lastSlnFileName;
 		AsyncCriticalSection builderLock = new AsyncCriticalSection ();
 
-		internal async Task<RemoteProjectBuilder> GetProjectBuilder (OperationContext context = null)
+		internal async Task<RemoteProjectBuilder> GetProjectBuilder (CancellationToken token, OperationContext context, bool setBusy = false, bool allowBusy = false)
 		{
-			//FIXME: we can't really have per-project runtimes, has to be per-solution
 			TargetRuntime runtime = null;
 			var ap = this as IAssemblyProject;
 			runtime = ap != null ? ap.TargetRuntime : Runtime.SystemAssemblyService.CurrentRuntime;
@@ -1427,48 +1386,20 @@ namespace MonoDevelop.Projects
 			var sln = ParentSolution;
 			var slnFile = sln != null ? sln.FileName : null;
 
-			RemoteProjectBuilder result = null;
+			// Extract the session ID from the current build context, if there is one
+			object buildSessionId = null;
+			if (context != null)
+				context.SessionData.TryGetValue (MSBuildSolutionExtension.MSBuildProjectOperationId, out buildSessionId);
 
-			using (await builderLock.EnterAsync ()) {
-				bool refAdded = false;
-				if (projectBuilder == null || !(refAdded = projectBuilder.AddReference ()) || lastBuildToolsVersion != ToolsVersion || lastBuildRuntime != runtime.Id || lastFileName != FileName || lastSlnFileName != slnFile) {
-					if (projectBuilder != null && refAdded) {
-						projectBuilder.Shutdown ();
-						projectBuilder.ReleaseReference ();
-					}
+			var engine = await RemoteBuildEngineManager.GetBuildEngine (runtime, ToolsVersion, slnFile, RequiresMicrosoftBuild, "", buildSessionId, setBusy, allowBusy);
+			var builder = await engine.GetRemoteProjectBuilder (FileName);
 
-					// Extract the session ID from the current build context, if there is one
-					object ob;
-					int buildSessionId;
-					if (context != null && context.SessionData.TryGetValue (MSBuildSolutionExtension.MSBuildProjectOperationId, out ob))
-						buildSessionId = (int)ob;
-					else
-						buildSessionId = -1;
-
-					var pb = await MSBuildProjectService.GetProjectBuilder (runtime, ToolsVersion, FileName, slnFile, 0, RequiresMicrosoftBuild, buildSessionId);
-					pb.AddReference ();
-					pb.Disconnected += delegate {
-						CleanupProjectBuilder ();
-					};
-					projectBuilder = pb;
-					lastBuildToolsVersion = ToolsVersion;
-					lastBuildRuntime = runtime.Id;
-					lastFileName = FileName;
-					lastSlnFileName = slnFile;
-				}
-				if (modifiedInMemory) {
-					try {
-						modifiedInMemory = false;
-						string content = await WriteProjectAsync (new ProgressMonitor ());
-						await projectBuilder.RefreshWithContent (content);
-					} catch {
-						projectBuilder.ReleaseReference ();
-						throw;
-					}
-				}
-				result = projectBuilder;
+			if (modifiedInMemory) {
+				modifiedInMemory = false;
+				string content = await WriteProjectAsync (new ProgressMonitor ());
+				await RemoteBuildEngineManager.RefreshProjectWithContent (FileName, content);
 			}
-			return result;
+			return builder;
 		}
 
 		void GetReferencedSDKs (Project project, ref HashSet<string> sdks, HashSet<string> traversedProjects)
@@ -1497,57 +1428,14 @@ namespace MonoDevelop.Projects
 			}
 		}
 
-		RemoteProjectBuilder GetCachedProjectBuilder ()
-		{
-			var pb = projectBuilder;
-			if (pb != null && pb.AddReference ())
-				return pb;
-			return null;
-		}
-
-		async Task<RemoteProjectBuilder> RequestLockedBuilder ()
-		{
-			TargetRuntime runtime = null;
-			var ap = this as IAssemblyProject;
-			runtime = ap != null ? ap.TargetRuntime : Runtime.SystemAssemblyService.CurrentRuntime;
-
-			var sln = ParentSolution;
-			var slnFile = sln != null ? sln.FileName : null;
-
-			var pb = await MSBuildProjectService.GetProjectBuilder (runtime, ToolsVersion, FileName, slnFile, 0, RequiresMicrosoftBuild, true);
-			pb.AddReference ();
-			if (modifiedInMemory) {
-				try {
-					string content = await WriteProjectAsync (new ProgressMonitor ());
-					await pb.RefreshWithContent (content);
-				} catch {
-					pb.Dispose ();
-					throw;
-				}
-			}
-			return pb;
-		}
-
-		void CleanupProjectBuilder ()
-		{
-			var pb = GetCachedProjectBuilder ();
-			if (pb != null) {
-				pb.Shutdown ();
-				pb.ReleaseReference ();
-			}
-		}
-
 		public Task RefreshProjectBuilder ()
 		{
-			var pb = GetCachedProjectBuilder ();
-			if (pb != null)
-				return pb.Refresh ().ContinueWith (t => pb.ReleaseReference ());
-			return Task.FromResult (true);
+			return RemoteBuildEngineManager.RefreshProject (FileName);
 		}
 
 		public void ReloadProjectBuilder ()
 		{
-			CleanupProjectBuilder ();
+			RemoteBuildEngineManager.RefreshProject (FileName).Ignore ();
 		}
 
 		#endregion

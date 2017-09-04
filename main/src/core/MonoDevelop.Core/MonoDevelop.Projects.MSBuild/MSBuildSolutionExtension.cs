@@ -26,24 +26,43 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Projects.MSBuild
 {
+	/// <summary>
+	/// This class starts MSBuild build sessions when a build operation starts in the solution
+	/// </summary>
+	[ExportProjectModelExtension]
 	class MSBuildSolutionExtension: SolutionExtension
 	{
 		public static readonly object MSBuildProjectOperationId = typeof (MSBuildSolutionExtension);
-		static int operations;
 
-		internal protected override Task OnBeginBuildOperation (ConfigurationSelector configuration, OperationContext operationContext)
+		internal protected override Task OnBeginBuildOperation (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext)
 		{
-			operationContext.SessionData [MSBuildProjectOperationId] = Interlocked.Increment (ref operations);
-			return base.OnBeginBuildOperation (configuration, operationContext);
+			// If the context is a TargetEvaluationContext with a specific msbuild verbosity, use it
+			// otherwise use the global setting
+			var targetContext = operationContext as TargetEvaluationContext;
+			var verbosity = targetContext != null ? targetContext.LogVerbosity : Runtime.Preferences.MSBuildVerbosity.Value;
+
+			// Start the build session
+			object sessionId = RemoteBuildEngineManager.StartBuildSession (monitor.Log, verbosity);
+
+			// Store the session handle in the context, so that it can be later used to
+			// add builds to the session.
+			operationContext.SessionData [MSBuildProjectOperationId] = sessionId;
+
+			return base.OnBeginBuildOperation (monitor, configuration, operationContext);
 		}
 
-		internal protected override async Task OnEndBuildOperation (ConfigurationSelector configuration, OperationContext operationContext, BuildResult result)
+		internal protected override async Task OnEndBuildOperation (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext, BuildResult result)
 		{
-			await MSBuildProjectService.EndBuildSessions ((int)operationContext.SessionData [MSBuildProjectOperationId]);
-			await base.OnEndBuildOperation (configuration, operationContext, result);
+			// Remove the session from the context and notify the build engine
+			// manager that the session has finished.
+			var id = operationContext.SessionData [MSBuildProjectOperationId];
+			operationContext.SessionData.Remove (MSBuildProjectOperationId);
+			await RemoteBuildEngineManager.EndBuildSession (id);
+			await base.OnEndBuildOperation (monitor, configuration, operationContext, result);
 		}
 	}
 }

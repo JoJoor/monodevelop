@@ -38,227 +38,6 @@ using MonoDevelop.Core.Execution;
 
 namespace MonoDevelop.Projects.MSBuild
 {
-	class RemoteBuildEngine
-	{
-		RemoteProcessConnection connection;
-		bool alive = true;
-		static int count;
-		int busy;
-
-		static int loggerIdCounter;
-		Dictionary<int, LoggerInfo> loggers = new Dictionary<int, LoggerInfo> ();
-
-		public int ReferenceCount { get; set; }
-		public DateTime ReleaseTime { get; set; }
-
-		List<RemoteProjectBuilder> remoteProjectBuilders = new List<RemoteProjectBuilder> ();
-
-		public RemoteBuildEngine (RemoteProcessConnection connection)
-		{
-			this.connection = connection;
-			Interlocked.Increment (ref count);
-			connection.AddListener (this);
-		}
-
-		public event EventHandler Disconnected;
-
-		public int BuildSessionId { get; set; } = -1;
-
-		public int AciveEngines {
-			get {
-				return count;
-			}
-		}
-
-		public async Task<RemoteProjectBuilder> CreateRemoteProjectBuilder (string projectFile)
-		{
-			var builder = await LoadProject (projectFile).ConfigureAwait (false);
-			var pb = new RemoteProjectBuilder (projectFile, builder, this);
-			lock (remoteProjectBuilders) {
-				remoteProjectBuilders.Add (pb);
-
-				// Unlikely, but it may happen
-				if (IsShuttingDown)
-					pb.Shutdown ();
-			}
-			return pb;
-		}
-
-		async Task<ProjectBuilder> LoadProject (string projectFile)
-		{
-			try {
-				var pid = (await connection.SendMessage (new LoadProjectRequest { ProjectFile = projectFile })).ProjectId;
-				return new ProjectBuilder (connection, pid);
-			} catch {
-				await CheckDisconnected ();
-				throw;
-			}
-		}
-		
-		internal async Task UnloadProject (RemoteProjectBuilder remoteBuilder, ProjectBuilder builder)
-		{
-			lock (remoteProjectBuilders)
-				remoteProjectBuilders.Remove (remoteBuilder);
-			
-			try {
-				await connection.SendMessage (new UnloadProjectRequest { ProjectId = ((ProjectBuilder)builder).ProjectId});
-			} catch (Exception ex) {
-				LoggingService.LogError ("Project unloading failed", ex);
-				if (!await CheckDisconnected ())
-					throw;
-			}
-		}
-
-		/// <summary>
-		/// Marks this instance as being shutdown, so it should not be used to create new project builders.
-		/// </summary>
-		public void Shutdown ()
-		{
-			lock (remoteProjectBuilders) {
-				if (IsShuttingDown)
-					return;
-				IsShuttingDown = true;
-				foreach (var pb in remoteProjectBuilders)
-					pb.Shutdown ();
-			}
-		}
-
-		public bool IsShuttingDown { get; private set; }
-
-		public async Task CancelTask (int taskId)
-		{
-			try {
-				await connection.SendMessage (new CancelTaskRequest { TaskId = taskId });
-			} catch {
-				await CheckDisconnected ();
-				throw;
-			}
-		}
-
-		public async Task SetGlobalProperties (Dictionary<string, string> properties)
-		{
-			try {
-				await connection.SendMessage (new SetGlobalPropertiesRequest { Properties = properties });
-			} catch {
-				await CheckDisconnected ();
-				throw;
-			}
-		}
-
-		public async Task BeginBuildOperation ()
-		{
-			try {
-				await connection.SendMessage (new BeginBuildRequest ());
-			} catch {
-				await CheckDisconnected ();
-				throw;
-			}
-		}
-
-		public async Task EndBuildOperation ()
-		{
-			try {
-				await connection.SendMessage (new EndBuildRequest ());
-			} catch {
-				await CheckDisconnected ();
-				throw;
-			}
-		}
-
-		public async Task Ping ()
-		{
-			await connection.SendMessage (new PingRequest ());
-		}
-
-		async Task<bool> CheckAlive ()
-		{
-			if (!alive)
-				return false;
-			try {
-				await Ping ();
-				return true;
-			} catch {
-				alive = false;
-				return false;
-			}
-		}
-
-		internal async Task<bool> CheckDisconnected ()
-		{
-			if (!await CheckAlive ()) {
-				if (Disconnected != null)
-					Disconnected (this, EventArgs.Empty);
-				return true;
-			}
-			return false;
-		}
-
-		public void Dispose ()
-		{
-			Interlocked.Decrement (ref count);
-			try {
-				alive = false;
-				connection.Disconnect ().Ignore ();
-			} catch {
-				// Ignore
-			}
-		}
-
-		[MessageHandler]
-		void OnLogMessage (LogMessage msg)
-		{
-			LoggerInfo logger = null;
-			lock (loggers) {
-				if (!loggers.TryGetValue (msg.LoggerId, out logger))
-					return;
-			}
-			if (msg.LogText != null)
-				logger.Writer.Write (msg.LogText);
-			if (msg.Events != null && logger.Logger != null) {
-				foreach (var e in msg.Events)
-					logger.Logger.NotifyEvent (e);
-			}
-		}
-
-		class LoggerInfo
-		{
-			public TextWriter Writer;
-			public MSBuildLogger Logger;
-		}
-
-		public int RegisterLogger (TextWriter writer, MSBuildLogger logger)
-		{
-			lock (loggers) {
-				var i = loggerIdCounter++;
-				loggers [i] = new LoggerInfo { Writer = writer, Logger = logger };
-				return i;
-			}
-		}
-
-		public void UnregisterLogger (int id)
-		{
-			lock (loggers) {
-				loggers.Remove (id);
-			}
-		}
-
-		public bool Lock ()
-		{
-			return Interlocked.Increment (ref busy) == 1;
-		}
-
-		public void Unlock ()
-		{
-			Interlocked.Decrement (ref busy);
-		}
-
-		public bool IsBusy {
-			get {
-				return busy > 0;
-			}
-		}
-	}
-
 	class ProjectBuilder
 	{
 		public int ProjectId;
@@ -328,6 +107,12 @@ namespace MonoDevelop.Projects.MSBuild
 			referenceCache = new Dictionary<string, AssemblyReference[]> ();
 			packageDependenciesCache = new Dictionary<string, PackageDependency[]> ();
 		}
+
+		public string File => file;
+
+		public bool IsLongOperationEngine { get; set; }
+
+		public int BuildSessionId { get; set; }
 
 		public event EventHandler Disconnected;
 
@@ -527,7 +312,7 @@ namespace MonoDevelop.Projects.MSBuild
 				try {
 					if (builder != null)
 						await engine.UnloadProject (this, builder).ConfigureAwait (false);
-					MSBuildProjectService.ReleaseProjectBuilder (engine);
+					RemoteBuildEngineManager.ReleaseProjectBuilder (engine).Ignore ();
 				} catch {
 					// Ignore
 				}
@@ -539,21 +324,21 @@ namespace MonoDevelop.Projects.MSBuild
 
 		void BeginOperation ()
 		{
-			engine.Lock ();
+			engine.SetBusy ();
         }
 
 		void EndOperation ()
 		{
 			if (engine != null)
-				engine.Unlock ();
+				engine.ResetBusy ();
 		}
 
-		public void Lock ()
+		public void SetBusy ()
 		{
 			BeginOperation ();
         }
 
-		public void Unlock ()
+		public void ResetBusy ()
 		{
 			EndOperation ();
 		}

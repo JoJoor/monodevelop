@@ -596,23 +596,34 @@ namespace MonoDevelop.Projects
 
 		async Task<BuildResult> BuildTask (ProgressMonitor monitor, ConfigurationSelector solutionConfiguration, bool buildReferences, OperationContext operationContext)
 		{
+			BuildResult result = null;
+			bool operationStarted = false;
+
 			if (!buildReferences) {
 				try {
 					SolutionItemConfiguration iconf = GetConfiguration (solutionConfiguration);
 					string confName = iconf != null ? iconf.Id : solutionConfiguration.ToString ();
 					monitor.BeginTask (GettextCatalog.GetString ("Building: {0} ({1})", Name, confName), 1);
 
+					operationStarted = ParentSolution != null && await ParentSolution.BeginBuildOperation (monitor, solutionConfiguration, operationContext);
+
 					using (Counters.BuildProjectTimer.BeginTiming ("Building " + Name, GetProjectEventMetadata (solutionConfiguration))) {
-						return await InternalBuild (monitor, solutionConfiguration, operationContext);
+						result = await InternalBuild (monitor, solutionConfiguration, operationContext);
 					}
 
 				} finally {
+					if (operationStarted)
+						await ParentSolution.EndBuildOperation (monitor, solutionConfiguration, operationContext, result);
+					
 					monitor.EndTask ();
 				}
+				return result;
 			}
 
 			ITimeTracker tt = Counters.BuildProjectAndReferencesTimer.BeginTiming ("Building " + Name, GetProjectEventMetadata (solutionConfiguration));
 			try {
+				operationStarted = ParentSolution != null && await ParentSolution.BeginBuildOperation (monitor, solutionConfiguration, operationContext);
+
 				// Get a list of all items that need to be built (including this),
 				// and build them in the correct order
 
@@ -626,13 +637,17 @@ namespace MonoDevelop.Projects
 				string confName = iconf != null ? iconf.Id : solutionConfiguration.ToString ();
 				monitor.BeginTask (GettextCatalog.GetString ("Building: {0} ({1})", Name, confName), sortedReferenced.Count);
 
-				return await SolutionFolder.RunParallelBuildOperation (monitor, solutionConfiguration, sortedReferenced, (ProgressMonitor m, SolutionItem item) => {
+				result = await SolutionFolder.RunParallelBuildOperation (monitor, solutionConfiguration, sortedReferenced, (ProgressMonitor m, SolutionItem item) => {
 					return item.Build (m, solutionConfiguration, false, operationContext);
 				}, false);
 			} finally {
 				monitor.EndTask ();
 				tt.End ();
+
+				if (operationStarted)
+					await ParentSolution.EndBuildOperation (monitor, solutionConfiguration, operationContext, result);
 			}
+			return result;
 		}
 
 		async Task<BuildResult> InternalBuild (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext)

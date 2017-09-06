@@ -92,16 +92,9 @@ namespace MonoDevelop.Projects.MSBuild
 
 		public bool BuildOperationStarted { get; set; }
 
-		public MSBuildLoggerAdapter SessionLoggerAdapter {
-			get {
-				return loggerAdapter;
-			}
-		}
-
 		void BeginBuildOperation (IEngineLogWriter logWriter, MSBuildVerbosity verbosity)
 		{
 			// Start a new MSBuild build session, sending log to the provided writter
-
 			BuildOperationStarted = true;
 			BuildParameters parameters = new BuildParameters (engine);
 			sessionLogWriter = logWriter;
@@ -123,7 +116,7 @@ namespace MonoDevelop.Projects.MSBuild
 			sessionLogWriter = null;
 		}
 
-		public void SetCurrentLogger (IEngineLogWriter logWriter)
+		public MSBuildLoggerAdapter StartProjectSessionBuild (IEngineLogWriter logWriter)
 		{
 			// Sets the client logger to which to send build output.
 			// In the client, each project has its own logger,
@@ -132,10 +125,14 @@ namespace MonoDevelop.Projects.MSBuild
 			// client logger, the logger will be changed every time
 			// a new project build starts
 
-			if (logWriter != null)
-				loggerAdapter.EngineLogWriter = logWriter;
-			else
-				loggerAdapter.EngineLogWriter = sessionLogWriter;
+			loggerAdapter.BuildResult.Clear ();
+			loggerAdapter.EngineLogWriter = logWriter;
+			return loggerAdapter;
+		}
+
+		public void EndProjectSessionBuild ()
+		{
+			loggerAdapter.EngineLogWriter = sessionLogWriter;
 		}
 	}
 }

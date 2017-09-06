@@ -50,6 +50,7 @@ namespace MonoDevelop.Projects.MSBuild
 		class SessionInfo
 		{
 			public TextWriter Writer;
+			public MSBuildLogger Logger;
 			public MSBuildVerbosity Verbosity;
 		}
 
@@ -128,7 +129,7 @@ namespace MonoDevelop.Projects.MSBuild
 						// If a new session is being assigned, signal the session start
 						builder.BuildSessionId = buildSessionId;
 						var si = (SessionInfo)buildSessionId;
-						await builder.BeginBuildOperation (si.Writer, si.Verbosity).ConfigureAwait (false);
+						await builder.BeginBuildOperation (si.Writer, si.Logger, si.Verbosity).ConfigureAwait (false);
 					}
 					builder.ReferenceCount++;
 					return builder;
@@ -185,7 +186,7 @@ namespace MonoDevelop.Projects.MSBuild
 						builder.SetBusy ();
 					if (buildSessionId != null) {
 						var si = (SessionInfo) buildSessionId;
-						await builder.BeginBuildOperation (si.Writer, si.Verbosity);
+						await builder.BeginBuildOperation (si.Writer, si.Logger, si.Verbosity);
 					}
 					return builder;
 				});
@@ -254,11 +255,12 @@ namespace MonoDevelop.Projects.MSBuild
 		/// <returns>The build session handle.</returns>
 		/// <param name="tw">Log writter</param>
 		/// <param name="verbosity">MSBuild verbosity.</param>
-		internal static object StartBuildSession (TextWriter tw, MSBuildVerbosity verbosity)
+		internal static object StartBuildSession (TextWriter tw, MSBuildLogger logger, MSBuildVerbosity verbosity)
 		{
 			return new SessionInfo {
 					Writer = tw,
-					Verbosity = verbosity
+					Verbosity = verbosity,
+					Logger = logger
 				};
 		}
 

@@ -185,11 +185,11 @@ namespace MonoDevelop.Projects.MSBuild
 		/// <summary>
 		/// Indicates that a build session is starting
 		/// </summary>
-		public async Task BeginBuildOperation (TextWriter logWriter, MSBuildVerbosity verbosity)
+		public async Task BeginBuildOperation (TextWriter logWriter, MSBuildLogger logger, MSBuildVerbosity verbosity)
 		{
-			buildSessionLoggerId = RegisterLogger (logWriter, null);
+			buildSessionLoggerId = RegisterLogger (logWriter, logger);
 			try {
-				await connection.SendMessage (new BeginBuildRequest { LogWriterId = buildSessionLoggerId, Verbosity = verbosity });
+				await connection.SendMessage (new BeginBuildRequest { LogWriterId = buildSessionLoggerId, EnabledLogEvents = logger != null ? logger.EnabledEvents : MSBuildEvent.None, Verbosity = verbosity });
 			} catch {
 				UnregisterLogger (buildSessionLoggerId);
 				await CheckDisconnected ();

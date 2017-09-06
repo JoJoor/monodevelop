@@ -1071,6 +1071,93 @@ namespace MonoDevelop.Projects
 				WorkspaceObject.UnregisterCustomExtension (en);
 			}
 		}
+
+		[Test]
+		public async Task BuildSessionBeginEnd ()
+		{
+			var en = new CustomSolutionItemNode<TestBuildSolutionExtension> ();
+			var en2 = new CustomSolutionItemNode<TestBuildSolutionItemExtension> ();
+
+			WorkspaceObject.RegisterCustomExtension (en);
+			WorkspaceObject.RegisterCustomExtension (en2);
+
+			int beginCount = 0, endCount = 0, projectBuildCount = 0;
+
+			TestBuildSolutionExtension.BeginBuildCalled = delegate {
+				beginCount++;
+			};
+
+			TestBuildSolutionExtension.EndBuildCalled = delegate {
+				endCount++;
+			};
+
+			TestBuildSolutionItemExtension.BuildCalled = delegate {
+				Assert.AreEqual (1, beginCount);
+				Assert.AreEqual (0, endCount);
+				projectBuildCount++;
+			};
+
+			try {
+
+				FilePath solFile = Util.GetSampleProject ("build-session", "build-session.sln");
+				var sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+
+				Assert.AreEqual (0, beginCount);
+				Assert.AreEqual (0, endCount);
+				Assert.AreEqual (0, projectBuildCount);
+
+				// Test building the whole solution
+
+				var res = await sol.Build (Util.GetMonitor (), "Debug");
+
+				Assert.AreEqual (1, beginCount);
+				Assert.AreEqual (1, endCount);
+				Assert.AreEqual (3, projectBuildCount);
+
+				// Test building a solution folder
+
+				beginCount = endCount = projectBuildCount = 0;
+
+				var folder = (SolutionFolder)sol.RootFolder.Items.FirstOrDefault (i => i.Name == "libraries");
+
+				res = await folder.Build (Util.GetMonitor (), sol.Configurations["Debug|x86"].Selector);
+
+				Assert.AreEqual (1, beginCount);
+				Assert.AreEqual (1, endCount);
+				Assert.AreEqual (2, projectBuildCount);
+
+				// Test building a specific item and dependencies
+
+				beginCount = endCount = projectBuildCount = 0;
+
+				var item = (SolutionItem)sol.RootFolder.Items.FirstOrDefault (i => i.Name == "build-session");
+
+				res = await item.Build (Util.GetMonitor (), sol.Configurations ["Debug|x86"].Selector, true);
+
+				Assert.AreEqual (1, beginCount);
+				Assert.AreEqual (1, endCount);
+				Assert.AreEqual (3, projectBuildCount);
+
+				// Test building a specific item but not its dependencies
+
+				beginCount = endCount = projectBuildCount = 0;
+
+				res = await item.Build (Util.GetMonitor (), sol.Configurations ["Debug|x86"].Selector, false);
+
+				Assert.AreEqual (1, beginCount);
+				Assert.AreEqual (1, endCount);
+				Assert.AreEqual (1, projectBuildCount);
+
+				sol.Dispose ();
+			} finally {
+				TestBuildSolutionExtension.BeginBuildCalled = null;
+				TestBuildSolutionExtension.EndBuildCalled = null;
+				TestBuildSolutionItemExtension.BuildCalled = null;
+
+				WorkspaceObject.UnregisterCustomExtension (en);
+				WorkspaceObject.UnregisterCustomExtension (en2);
+			}
+		}
 	}
 
 	class SomeItem: SolutionItem
@@ -1137,5 +1224,33 @@ namespace MonoDevelop.Projects
 
 		[ItemProperty ("prop4", DefaultValue = "")]
 		public string Prop4 { get; set; }
+	}
+
+	class TestBuildSolutionExtension : SolutionExtension
+	{
+		public static Action BeginBuildCalled, EndBuildCalled;
+
+		protected internal override Task OnBeginBuildOperation (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext)
+		{
+			BeginBuildCalled?.Invoke ();
+			return base.OnBeginBuildOperation (monitor, configuration, operationContext);
+		}
+
+		protected internal override Task OnEndBuildOperation (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext, BuildResult result)
+		{
+			EndBuildCalled?.Invoke ();
+			return base.OnEndBuildOperation (monitor, configuration, operationContext, result);
+		}
+	}
+
+	class TestBuildSolutionItemExtension : SolutionItemExtension
+	{
+		public static Action BuildCalled;
+
+		protected internal override Task<BuildResult> OnBuild (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext)
+		{
+			BuildCalled?.Invoke ();
+			return base.OnBuild (monitor, configuration, operationContext);
+		}
 	}
 }

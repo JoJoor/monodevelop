@@ -599,6 +599,9 @@ namespace MonoDevelop.Projects
 			BuildResult result = null;
 			bool operationStarted = false;
 
+			if (operationContext == null)
+				operationContext = new OperationContext ();
+
 			if (!buildReferences) {
 				try {
 					SolutionItemConfiguration iconf = GetConfiguration (solutionConfiguration);

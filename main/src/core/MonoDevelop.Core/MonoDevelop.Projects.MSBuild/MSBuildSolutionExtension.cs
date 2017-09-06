@@ -44,9 +44,10 @@ namespace MonoDevelop.Projects.MSBuild
 			// otherwise use the global setting
 			var targetContext = operationContext as TargetEvaluationContext;
 			var verbosity = targetContext != null ? targetContext.LogVerbosity : Runtime.Preferences.MSBuildVerbosity.Value;
+			var logger = targetContext != null ? new ProxyLogger (null, targetContext.Loggers) : null;
 
 			// Start the build session
-			object sessionId = RemoteBuildEngineManager.StartBuildSession (monitor.Log, verbosity);
+			object sessionId = RemoteBuildEngineManager.StartBuildSession (monitor.Log, logger, verbosity);
 
 			// Store the session handle in the context, so that it can be later used to
 			// add builds to the session.

@@ -231,6 +231,9 @@ namespace MonoDevelop.Projects.MSBuild
 		public int LogWriterId { get; set; }
 
 		[MessageDataProperty]
+		public MSBuildEvent EnabledLogEvents { get; set; }
+
+		[MessageDataProperty]
 		public MSBuildVerbosity Verbosity { get; set; }
 	}
 

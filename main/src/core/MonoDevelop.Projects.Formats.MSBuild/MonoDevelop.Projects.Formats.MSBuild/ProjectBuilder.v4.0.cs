@@ -69,8 +69,7 @@ namespace MonoDevelop.Projects.MSBuild
 				MSBuildLoggerAdapter loggerAdapter;
 
 				if (buildEngine.BuildOperationStarted) {
-					buildEngine.SetCurrentLogger (logWriter);
-					loggerAdapter = buildEngine.SessionLoggerAdapter;
+					loggerAdapter = buildEngine.StartProjectSessionBuild (logWriter);
 				}
 				else
 					loggerAdapter = new MSBuildLoggerAdapter (logWriter, verbosity);
@@ -126,7 +125,7 @@ namespace MonoDevelop.Projects.MSBuild
 					result = new MSBuildResult (new [] { r });
 				} finally {
 					if (buildEngine.BuildOperationStarted)
-						buildEngine.SetCurrentLogger (null);
+						buildEngine.EndProjectSessionBuild ();
 					else
 						loggerAdapter.Dispose ();
 					
@@ -187,7 +186,7 @@ namespace MonoDevelop.Projects.MSBuild
 				}
 			}
 
-			if (p.GetPropertyValue("Configuration") != configuration || (p.GetPropertyValue("Platform") ?? "") != (platform ?? ""))
+			if (p.GetPropertyValue("Configuration") != configuration || (p.GetPropertyValue("Platform") ?? "") != (platform ?? "") || p.GetPropertyValue ("CurrentSolutionConfigurationContents") != slnConfigContents)
 			{
 				p.SetGlobalProperty("CurrentSolutionConfigurationContents", slnConfigContents);
 				p.SetGlobalProperty("Configuration", configuration);

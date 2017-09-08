@@ -17,7 +17,7 @@ DEP[0]=md-addins
 DEP_NAME[0]=MDADDINS
 DEP_PATH[0]=${top_srcdir}/../md-addins
 DEP_MODULE[0]=git@github.com:xamarin/md-addins.git
-DEP_NEEDED_VERSION[0]=74c2e883244f745010655a86eb8f0bd54190c387
+DEP_NEEDED_VERSION[0]=2909ab0765c52059a5ad4cde7cb8d67f6703f063
 DEP_BRANCH_AND_REMOTE[0]="cobey-15-4-sdk-bump origin/cobey-15-4-sdk-bump"
 
 # heap-shot
